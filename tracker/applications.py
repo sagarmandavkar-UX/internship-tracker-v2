@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 from urllib.parse import urlparse
 
@@ -26,6 +27,18 @@ def get_internship(user_id: int, internship_id: int) -> Internship | None:
     with connect() as conn:
         row = conn.execute("select * from internships where id=? and user_id=?", (internship_id, user_id)).fetchone()
     return _row_to_internship(row) if row else None
+
+
+def get_auto_reminder_date(user_id: int, internship_id: int, kind: str) -> str | None:
+    """Look up an automatic reminder only when the application belongs to the user."""
+    with connect() as conn:
+        row = conn.execute(
+            """select r.reminder_date from reminders r
+               join internships i on i.id=r.internship_id
+               where r.internship_id=? and i.user_id=? and r.reminder_type=? and r.is_auto=1""",
+            (internship_id, user_id, kind),
+        ).fetchone()
+    return row["reminder_date"] if row else None
 
 
 def log_activity(conn, user_id: int, action: str, internship_id: int | None, details: str = "") -> None:
@@ -61,6 +74,12 @@ def validate_payload(data: dict[str, Any]) -> None:
         raise ValueError("Company and role are required.")
     if data.get("status") not in STATUSES or data.get("priority") not in PRIORITIES:
         raise ValueError("Invalid status or priority.")
+    for field in ("deadline", "date_applied", "follow_up_date"):
+        if data.get(field):
+            try:
+                date.fromisoformat(data[field])
+            except (TypeError, ValueError):
+                raise ValueError(f"{field.replace('_', ' ').title()} must be a valid YYYY-MM-DD date.") from None
     link = data.get("application_link")
     if link:
         parsed = urlparse(link)
@@ -102,7 +121,7 @@ def save_internship(user_id: int, data: dict[str, Any], internship_id: int | Non
                     where id=? and user_id=?""",
                 (
                     data["company_name"].strip(), data["role_title"].strip(), data.get("location"), data.get("application_link"),
-                    data.get("deadline"), data.get("date_applied"), data["status"], data.get("notes"), data.get("recruiter_name"),
+                    data["deadline"] if "deadline" in data else old["deadline"], data.get("date_applied"), data["status"], data.get("notes"), data.get("recruiter_name"),
                     data.get("recruiter_contact"), data.get("salary"), data.get("source"), data["priority"], data.get("next_action"),
                     data.get("resume_version"), now_iso(), internship_id, user_id,
                 ),
@@ -113,8 +132,11 @@ def save_internship(user_id: int, data: dict[str, Any], internship_id: int | Non
                     (internship_id, old["status"], data["status"], now_iso()),
                 )
             log_activity(conn, user_id, "Updated internship", internship_id, f"{data['company_name']} - {data['role_title']}")
-        _sync_auto_reminder(conn, internship_id, "Deadline", data.get("deadline"), "Application deadline")
-        _sync_auto_reminder(conn, internship_id, "Follow-up", data.get("follow_up_date"), "Follow-up reminder")
+        if "deadline" in data:
+            _sync_auto_reminder(conn, internship_id, "Deadline", data["deadline"], "Application deadline")
+        # Missing means an editor did not supply this field. Explicit None clears it.
+        if "follow_up_date" in data:
+            _sync_auto_reminder(conn, internship_id, "Follow-up", data["follow_up_date"], "Follow-up reminder")
         conn.commit()
     return internship_id
 
@@ -152,22 +174,31 @@ def delete_internship(user_id: int, internship_id: int) -> bool:
 def status_history(user_id: int, internship_id: int):
     with connect() as conn:
         return conn.execute(
-            "select h.* from status_history h join internships i on i.id=h.internship_id where h.internship_id=? and i.user_id=? order by h.changed_at",
+            "select h.* from status_history h join internships i on i.id=h.internship_id where h.internship_id=? and i.user_id=? order by h.changed_at,h.id",
             (internship_id, user_id),
         ).fetchall()
 
 
 def activity(user_id: int, limit: int = 10):
     with connect() as conn:
-        return conn.execute("select * from activity_log where user_id=? order by created_at desc limit ?", (user_id, limit)).fetchall()
+        return conn.execute("select * from activity_log where user_id=? order by created_at desc,id desc limit ?", (user_id, limit)).fetchall()
 
 
 def metrics(user_id: int) -> dict[str, int]:
     items = list_internships(user_id)
-    sent = [x for x in items if x.status != "Wishlist" or x.date_applied]
-    interviews = [x for x in sent if x.status in {"Interview", "Final Round", "Offer", "Accepted"}]
-    offers = [x for x in sent if x.status in {"Offer", "Accepted"}]
-    responses = [x for x in sent if x.status in {"Assessment", "Interview", "Final Round", "Rejected", "Offer", "Accepted"}]
+    with connect() as conn:
+        history = conn.execute(
+            """select h.internship_id,h.new_status from status_history h
+               join internships i on i.id=h.internship_id where i.user_id=?""",
+            (user_id,),
+        ).fetchall()
+    reached = {x.id: {x.status} for x in items}
+    for row in history:
+        reached[row["internship_id"]].add(row["new_status"])
+    sent = [x for x in items if x.date_applied or reached[x.id] - {"Wishlist"}]
+    interviews = [x for x in sent if reached[x.id] & {"Interview", "Final Round", "Offer", "Accepted"}]
+    offers = [x for x in sent if reached[x.id] & {"Offer", "Accepted"}]
+    responses = [x for x in sent if reached[x.id] & {"Assessment", "Interview", "Final Round", "Rejected", "Offer", "Accepted"}]
     return {
         "tracked": len(items),
         "sent": len(sent),

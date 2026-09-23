@@ -4,8 +4,8 @@ from datetime import date
 
 import streamlit as st
 
-from tracker.ai import cover_letter, resume_match, save_result, summarize_job
-from tracker.applications import activity, delete_internship, list_internships, metrics, save_internship, status_history, update_status
+from tracker.ai import cover_letter, list_results, resume_match, save_result, summarize_job
+from tracker.applications import activity, delete_internship, get_auto_reminder_date, list_internships, metrics, save_internship, status_history, update_status
 from tracker.auth import authenticate, create_user, get_profile, get_user, update_profile
 from tracker.db import init_db
 from tracker.extras import add_note, add_question, add_reminder, delete_reminder, export_csv, list_notes, list_questions, list_reminders, toggle_reminder
@@ -86,6 +86,16 @@ def dashboard(user_id: int) -> None:
                 st.write(row["details"] or "")
                 st.caption(row["created_at"])
     with right:
+        st.subheader("Reminders due")
+        due = [r for r in list_reminders(user_id, include_completed=False) if r["reminder_date"] <= date.today().isoformat()]
+        for row in due[:5]:
+            with st.container(border=True):
+                st.write(f"**{row['company_name']} · {row['reminder_type']}**")
+                st.caption(row["reminder_date"] + (" · overdue" if row["reminder_date"] < date.today().isoformat() else " · today"))
+                if st.button("Complete", key=f"dashboard-reminder-{row['id']}"):
+                    toggle_reminder(user_id, row["id"], True)
+                    st.rerun()
+        if not due: st.info("No reminders due today.")
         st.subheader("Upcoming deadlines")
         deadlines = [i for i in items if i.deadline and i.deadline >= date.today().isoformat() and i.status not in {"Rejected", "Accepted"}]
         for item in sorted(deadlines, key=lambda x: x.deadline)[:6]:
@@ -115,7 +125,11 @@ def internship_form(user_id: int, profile, item=None, key="new") -> None:
             priority = st.selectbox("Priority", PRIORITIES, index=PRIORITIES.index(item.priority) if item else 1)
             applied = st.date_input("Date applied", value=_date_value(item.date_applied) if item else None, format="YYYY-MM-DD")
             deadline = st.date_input("Deadline", value=_date_value(item.deadline) if item else None, format="YYYY-MM-DD")
-            followup = st.date_input("Follow-up", value=None, format="YYYY-MM-DD")
+            followup = st.date_input(
+                "Follow-up",
+                value=_date_value(get_auto_reminder_date(user_id, item.id, "Follow-up")) if item else None,
+                format="YYYY-MM-DD",
+            )
             resume = st.text_input("Resume version", value=item.resume_version or profile["resume_version"] or "" if item else profile["resume_version"] or "")
         recruiter = st.text_input("Recruiter / contact", value=item.recruiter_name or "" if item else "")
         contact = st.text_input("Contact info", value=item.recruiter_contact or "" if item else "")
@@ -155,7 +169,7 @@ def internships_page(user_id: int, profile) -> None:
         if status_filter != "All" and item.status != status_filter: continue
         if priority_filter != "All" and item.priority != priority_filter: continue
         filtered.append(item)
-    st.dataframe([{"Company":i.company_name,"Role":i.role_title,"Status":i.status,"Priority":i.priority,"Deadline":i.deadline or "","Resume":i.resume_version or "","Next action":i.next_action or ""} for i in filtered], use_container_width=True, hide_index=True)
+    st.dataframe([{"Company":i.company_name,"Role":i.role_title,"Status":i.status,"Priority":i.priority,"Deadline":i.deadline or "","Resume":i.resume_version or "","Next action":i.next_action or ""} for i in filtered], width="stretch", hide_index=True)
     if not filtered: return
     selected_id = st.selectbox("Open application", [i.id for i in filtered], format_func=lambda x: next(f"{i.company_name} · {i.role_title}" for i in filtered if i.id == x))
     item = next(i for i in filtered if i.id == selected_id)
@@ -232,11 +246,15 @@ def analytics_page(user_id: int) -> None:
     cols[0].metric("Tracked",m["tracked"]); cols[1].metric("Sent",m["sent"]); cols[2].metric("Interview rate",f"{m['interview_rate']}%"); cols[3].metric("Offer rate",f"{m['offer_rate']}%"); cols[4].metric("Response rate",f"{m['response_rate']}%")
     items=list_internships(user_id)
     counts={s:sum(i.status==s for i in items) for s in STATUSES}
-    st.bar_chart({k:v for k,v in counts.items() if v})
+    chart={k:v for k,v in counts.items() if v}
+    if chart: st.bar_chart(chart)
+    else: st.info("Add an application to see your pipeline breakdown.")
+    st.caption("Rates count the stages each application has reached, even if its current status later changes.")
 
 
 def ai_page(user_id: int, profile) -> None:
     st.title("AI Tools")
+    st.caption("With OPENAI_API_KEY configured, job descriptions and pasted resume text are sent to OpenAI only when you request an AI analysis. Without a key, the app uses labeled local tools.")
     items=list_internships(user_id)
     if not items: st.info("Add an internship first."); return
     internship_id=st.selectbox("Application",[i.id for i in items],format_func=lambda x:next(f"{i.company_name} · {i.role_title}" for i in items if i.id==x))
@@ -245,15 +263,38 @@ def ai_page(user_id: int, profile) -> None:
     with match_tab:
         resume=st.text_area("Resume text",height=180,key="match-resume"); jd=st.text_area("Job description",height=180,key="match-jd")
         if st.button("Analyze match"):
-            result=resume_match(resume,jd); save_result(user_id,item.id,"resume_match",result); st.metric("Match score",f"{result['score']}%"); st.write("Matching:",", ".join(result["matching_terms"])); st.write("Gaps:",", ".join(result["missing_terms"]))
+            try:
+                result=resume_match(resume,jd); save_result(user_id,item.id,"resume_match",result)
+                st.metric("Keyword coverage",f"{result['score']}%"); st.write("Matching:",", ".join(result["matching_terms"])); st.write("Gaps:",", ".join(result["missing_terms"]))
+                st.caption("Local keyword comparison; this is not an ATS score or hiring prediction.")
+            except ValueError as exc: st.warning(str(exc))
     with summary_tab:
         jd=st.text_area("Job description",height=220,key="summary-jd")
         if st.button("Summarize"):
-            result=summarize_job(jd); save_result(user_id,item.id,"job_summary",result); st.json(result)
+            try:
+                result=summarize_job(jd); save_result(user_id,item.id,"job_summary",result)
+                if result.get("warning"): st.warning(result["warning"])
+                st.json(result)
+            except ValueError as exc: st.warning(str(exc))
     with cover_tab:
         resume=st.text_area("Resume text",height=160,key="cover-resume"); jd=st.text_area("Job description",height=180,key="cover-jd")
         if st.button("Generate cover letter"):
-            letter=cover_letter(item.company_name,item.role_title,resume,jd,profile["display_name"]); save_result(user_id,item.id,"cover_letter",{"cover_letter":letter}); st.text_area("Draft",value=letter,height=320)
+            try:
+                result=cover_letter(item.company_name,item.role_title,resume,jd,profile["display_name"])
+                save_result(user_id,item.id,"cover_letter",result)
+                if result.get("warning"): st.warning(result["warning"])
+                st.caption(f"Generated by: {result['source']}")
+                st.text_area("Draft",value=result["text"],height=320)
+            except ValueError as exc: st.warning(str(exc))
+    with st.expander("Saved analyses for this application"):
+        history=list_results(user_id,item.id)
+        if not history: st.info("No analyses saved yet.")
+        for entry in history:
+            st.write(f"**{entry['type'].replace('_',' ').title()} · {entry['result'].get('source','Previously saved')}**")
+            st.caption(entry["created_at"])
+            if entry["type"]=="cover_letter":
+                st.text(entry["result"].get("text") or entry["result"].get("cover_letter", ""))
+            else: st.json(entry["result"])
 
 
 def profile_page(user_id: int, profile) -> None:

@@ -3,10 +3,11 @@ from __future__ import annotations
 import csv
 import io
 from dataclasses import asdict
+from datetime import date
 
 from .applications import list_internships, log_activity
 from .db import connect, now_iso
-from .models import REMINDER_TYPES
+from .models import Internship, QUESTION_TYPES, REMINDER_TYPES
 
 
 def list_reminders(user_id: int, include_completed: bool = True):
@@ -20,6 +21,10 @@ def list_reminders(user_id: int, include_completed: bool = True):
 
 def add_reminder(user_id: int, internship_id: int, kind: str, when: str, notes: str) -> bool:
     if kind not in REMINDER_TYPES:
+        return False
+    try:
+        date.fromisoformat(when)
+    except (TypeError, ValueError):
         return False
     with connect() as conn:
         if not conn.execute("select 1 from internships where id=? and user_id=?", (internship_id, user_id)).fetchone():
@@ -68,7 +73,7 @@ def list_questions(user_id: int, internship_id: int):
 
 
 def add_question(user_id: int, internship_id: int, kind: str, question: str, answer: str) -> bool:
-    if not question.strip():
+    if kind not in QUESTION_TYPES or not question.strip():
         return False
     with connect() as conn:
         if not conn.execute("select 1 from internships where id=? and user_id=?", (internship_id, user_id)).fetchone():
@@ -101,15 +106,15 @@ def add_note(user_id: int, internship_id: int, text: str) -> bool:
 
 
 def export_csv(user_id: int) -> bytes:
+    fields = [name for name in Internship.__dataclass_fields__ if name not in {"id", "user_id", "created_at", "updated_at"}]
     rows = []
     for item in list_internships(user_id):
         row = asdict(item)
         for key in ("id", "user_id", "created_at", "updated_at"):
             row.pop(key, None)
-        rows.append(row)
-    if not rows:
-        return b""
+        # Prevent spreadsheet programs from interpreting user-entered text as formulas.
+        rows.append({key: "'" + value if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")) else value for key, value in row.items()})
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=list(rows[0]))
+    writer = csv.DictWriter(buffer, fieldnames=fields)
     writer.writeheader(); writer.writerows(rows)
     return buffer.getvalue().encode("utf-8")

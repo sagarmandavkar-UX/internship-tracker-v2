@@ -6,8 +6,16 @@ venv/
 
 # Local data / secrets
 internships.db
+*.db
+*.sqlite
+*.sqlite3
 *.db-journal
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
 
 # Streamlit / OS / editors
 .streamlit/secrets.toml

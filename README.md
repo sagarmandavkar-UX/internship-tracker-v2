@@ -1,21 +1,23 @@
 # Internship Tracker v2
 
-A Streamlit application for tracking internship and new-grad applications, deadlines, follow-ups, interview prep, recruiter context, resume versions, analytics, exports, and optional OpenAI assistance.
+A Streamlit application for tracking internship and new-grad applications, deadlines, follow-ups, interview prep, recruiter context, resume versions, analytics, exports, and optional OpenAI assistance. Each person signs in to see only their own records through the app.
+
+![CI](https://github.com/sagarmandavkar-UX/internship-tracker-v2/actions/workflows/smoke-test.yml/badge.svg)
 
 ## Features
 
-- Secure sign-up and login with salted PBKDF2-SHA256 password hashes
+- Sign-up and login with salted PBKDF2-SHA256 password hashes
 - Per-user application data and ownership checks
 - Add, edit, search, filter, update, and delete applications
 - Application status history
 - Priority, source, recruiter, compensation, resume version, and next-action tracking
-- Deadline and follow-up reminders plus manual tasks
+- Automatically created deadline and follow-up reminders, plus manual tasks and a dashboard of items due today or overdue
 - Interview question bank and company notes
-- Dashboard and pipeline analytics
-- Resume/job-description match helper
-- Job-description summary helper
-- Cover-letter generator
-- Local fallback behavior when no OpenAI API key is configured
+- Dashboard and funnel analytics that preserve stages reached after later status changes
+- Local resume/job-description keyword comparison, labeled as keyword coverage
+- Optional AI job-description summaries and cover-letter drafts
+- Clearly labeled local fallback when no OpenAI API key is configured or a request fails
+- Saved analyses attached to the owner's application
 - CSV export
 - Dark mode preference
 - SQLite foreign-key enforcement and cascading cleanup
@@ -25,7 +27,7 @@ A Streamlit application for tracking internship and new-grad applications, deadl
 - Python 3.10+
 - Streamlit
 - SQLite
-- OpenAI Python SDK, optional
+- OpenAI Python SDK, used only when an API key is configured
 
 ## Install
 
@@ -42,7 +44,7 @@ pip install -r requirements.txt
 streamlit run internship_tracker_v2.py
 ```
 
-The app creates `internships.db` in the repository directory. That file is excluded from Git by `.gitignore`.
+Open the local address Streamlit prints, usually `http://localhost:8501`. Create an account, add an application, set a deadline or follow-up, and open Analytics or AI Tools. The app creates `internships.db` in the repository directory. Database files are excluded from Git by `.gitignore`.
 
 To use a different database path:
 
@@ -64,9 +66,9 @@ Optional model override:
 export OPENAI_MODEL="gpt-4.1-mini"
 ```
 
-AI calls use `store=False`. Generated outputs are saved locally with the associated user/application, while raw resume and job-description text is not stored in the `ai_results` table.
+AI calls use `store=False`. If a key is configured, clicking Summarize or Generate cover letter sends the text you pasted to OpenAI. Generated outputs are saved in the local SQLite database with the associated user/application. Raw resume and job-description inputs are not saved in the `ai_results` table. Review the service provider's data policies before submitting personal text.
 
-Without an API key, job summaries and resume matching use local fallback logic, and cover letters use a basic local template.
+Without an API key, job summaries use a local term scan, resume matching uses local keyword coverage, and cover letters use a basic local template. The UI labels the source; a keyword score is not an ATS score or hiring prediction.
 
 ## Repository layout
 
@@ -81,6 +83,7 @@ tracker/
   extras.py                Reminders, interview prep, notes, CSV export
   ai.py                    Optional OpenAI and local AI helpers
 smoke_test_tracker.py      Core data/security smoke tests
+tests/                     App startup, owner isolation, funnel, reminder, and AI fallback tests
 requirements.txt           Python dependencies
 .env.example               Environment-variable template
 .gitignore                 Local DB, secrets, virtualenv and editor ignores
@@ -90,14 +93,16 @@ requirements.txt           Python dependencies
 
 ```bash
 python smoke_test_tracker.py
+python -m pytest -q tests
 ```
 
-The smoke test covers account authentication, application creation, automatic and manual reminders, status history, cross-user isolation, foreign-key enforcement, and cascade deletion.
+GitHub Actions installs the pinned dependencies, compiles the code, and runs both test suites on Python 3.10, 3.11, and 3.12. The tests cover account authentication, application creation, reminders, status history, cross-user isolation, funnel rates, local and mocked AI paths, a Streamlit sign-up flow, foreign-key enforcement, and cascade deletion. Live OpenAI requests are not part of CI.
 
 ## Security notes
 
 - Passwords are salted and hashed, never stored as plaintext.
-- Application, reminder, note, question, and AI-result operations are scoped to the authenticated user.
+- Application, reminder, note, question, and AI-result operations are scoped to the signed-in user in the app.
 - `.env`, Streamlit secrets, and local SQLite data are excluded from Git.
 - OpenAI requests use `store=False`.
-- This project is suitable for a personal portfolio demo or small single-instance deployment. For a public multi-instance service, move authentication and persistence to managed infrastructure, add password reset/email verification, server-side rate limiting, backups, and a production database such as PostgreSQL.
+- Reminders appear inside the app; it does not send emails or operating-system notifications in the background.
+- The SQLite database is not encrypted at rest. People who can read the database file on the host can read its application data. This is a local or small single-instance demo, not a production multi-tenant service. A public deployment needs managed authentication and storage, password reset, login rate limiting, HTTPS, backups, and a production database.
