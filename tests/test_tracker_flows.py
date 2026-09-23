@@ -114,6 +114,11 @@ def test_ai_path_and_fallback_are_explicit(clean_db, monkeypatch):
     assert cover_letter("Acme", "APM", "SQL analyst", "SQL required", "Test User")["source"] == "Local template"
 
 
+def test_optional_openai_client_initializes_without_a_network_call(clean_db, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only")
+    assert callable(ai._client().responses.create)
+
+
 def test_signup_application_and_reminder_in_streamlit(clean_db):
     app = AppTest.from_file(Path(__file__).resolve().parents[1] / "internship_tracker_v2.py").run(timeout=20)
     assert not app.exception
