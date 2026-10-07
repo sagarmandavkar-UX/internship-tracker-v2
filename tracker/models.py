@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-STATUSES = ["Wishlist", "Applied", "Assessment", "Interview", "Final Round", "Rejected", "Offer", "Accepted"]
+STATUSES = ["Wishlist", "Applied", "Warm", "Assessment", "Interview", "Final Round", "Rejected", "Offer", "Accepted"]
 PRIORITIES = ["Low", "Medium", "High"]
 REMINDER_TYPES = ["Deadline", "Follow-up", "Interview", "Networking", "Task"]
 QUESTION_TYPES = ["Behavioral", "Technical", "PM", "Case", "AI Generated"]

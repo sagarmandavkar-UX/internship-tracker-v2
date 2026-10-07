@@ -9,6 +9,10 @@ A Streamlit application for tracking internship and new-grad applications, deadl
 - Sign-up and login with salted PBKDF2-SHA256 password hashes
 - Per-user application data and ownership checks
 - Add, edit, search, filter, update, and delete applications
+- Safe CSV/JSON tracker sync with company+role matching and duplicate protection
+- `Warm` status for recruiter advocacy or future-role nurturing without an active interview
+- Evidence-aware status updates that avoid silent regression, with re-application handling
+- Append-only dated sync notes and a visible “Changed in last sync” dashboard summary
 - Application status history
 - Priority, source, recruiter, compensation, resume version, and next-action tracking
 - Automatically created deadline and follow-up reminders, plus manual tasks and a dashboard of items due today or overdue
@@ -45,6 +49,12 @@ streamlit run internship_tracker_v2.py
 ```
 
 Open the local address Streamlit prints, usually `http://localhost:8501`. Create an account, add an application, set a deadline or follow-up, and open Analytics or AI Tools. The app creates `internships.db` in the repository directory. Database files are excluded from Git by `.gitignore`.
+
+### Import or sync a tracker file
+
+Open **Export** in the sidebar and upload a CSV or JSON file. Supported field names are `company`, `role`, `status`, `date`, and `notes`; the app also accepts its exported names such as `company_name`, `role_title`, and `date_applied`. Friend-style `Interviewing` values map to `Interview`. Optional `changed`, `event_date`, or `changed_at` fields can identify a genuinely new status development without replacing the original application date.
+
+The sync matches on normalized company + role, ignores trailing requisition codes for the same title, keeps descriptive role suffixes distinct, never overwrites existing notes, and will not move advanced or terminal stages backward. A genuinely newer `Applied` record can reopen a rejected application as a re-application.
 
 To use a different database path:
 

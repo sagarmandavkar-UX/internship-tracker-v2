@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from html import escape
 
 import streamlit as st
 
@@ -10,17 +11,55 @@ from tracker.auth import authenticate, create_user, get_profile, get_user, updat
 from tracker.db import init_db
 from tracker.extras import add_note, add_question, add_reminder, delete_reminder, export_csv, list_notes, list_questions, list_reminders, toggle_reminder
 from tracker.models import PRIORITIES, QUESTION_TYPES, REMINDER_TYPES, STATUSES
+from tracker.sync import latest_sync, parse_sync_file, sync_applications
 
 st.set_page_config(page_title="Internship Tracker AI", page_icon="💼", layout="wide")
 
 
 def theme(dark: bool) -> None:
-    bg, card, text, muted, border = (("#0b1020", "#111827", "#f8fafc", "#a8b3c7", "#293548") if dark else ("#f6f8fc", "#ffffff", "#111827", "#667085", "#d7dde7"))
+    bg, card, text, muted, border, accent = (("#0b1020", "#111827", "#f8fafc", "#a8b3c7", "#293548", "#8b7cff") if dark else ("#f8f9fc", "#ffffff", "#111936", "#667085", "#e1e5ee", "#6258e8"))
     st.markdown(f"""
     <style>
       .stApp {{background:{bg}; color:{text};}}
       section[data-testid='stSidebar'] {{background:{card}; border-right:1px solid {border};}}
-      div[data-testid='stMetric'] {{background:{card}; border:1px solid {border}; padding:.65rem .8rem; border-radius:.8rem;}}
+      section[data-testid='stSidebar'] h1 {{color:{text} !important; font-size:1.45rem;}}
+      section[data-testid='stSidebar'] [data-testid='stMarkdownContainer'] p {{color:{muted};}}
+      section[data-testid='stSidebar'] [data-testid='stRadio'] label {{padding:.42rem .55rem; border-radius:.5rem;}}
+      section[data-testid='stSidebar'] [data-testid='stRadio'] label:has(input:checked) {{background:{'#272342' if dark else '#eeecff'};}}
+      section[data-testid='stSidebar'] [data-testid='stRadio'] label:has(input:checked) p {{color:{'#dcd8ff' if dark else '#4d42d6'}; font-weight:650;}}
+      .block-container {{padding-top:2.1rem; padding-bottom:3rem; max-width:1500px;}}
+      h1 {{letter-spacing:-.035em; color:{text};}}
+      h2, h3 {{letter-spacing:-.018em;}}
+      div[data-testid='stMetric'] {{background:{card}; border:1px solid {border}; padding:.8rem .9rem; border-radius:.7rem; box-shadow:0 1px 2px rgba(17,25,54,.03);}}
+      div[data-testid='stMetric'] label {{color:{muted}; font-size:.79rem;}}
+      div[data-testid='stMetricValue'] {{color:{text}; font-weight:700;}}
+      div[data-testid='stDataFrame'] {{border:1px solid {border}; border-radius:.65rem; overflow:hidden;}}
+      [data-baseweb='input'], [data-baseweb='base-input'], [data-baseweb='input'] > div, [data-baseweb='select'] > div, [data-baseweb='textarea'] > div {{background:{card} !important; border-color:{border} !important; color:{text};}}
+      [data-baseweb='input'] input, [data-baseweb='select'] span, [data-baseweb='textarea'] textarea {{color:{text} !important;}}
+      .sync-panel {{background:{'#181631' if dark else '#f0efff'}; border:1px solid {'#3a3564' if dark else '#dddbff'}; border-radius:.7rem; padding:.85rem 1rem; margin:.8rem 0 1.2rem;}}
+      .sync-panel strong {{color:{'#dcd8ff' if dark else '#332b95'};}}
+      .sync-panel p {{margin:.2rem 0; color:{muted}; font-size:.9rem;}}
+      .sync-dot {{display:inline-block; width:.48rem; height:.48rem; border-radius:50%; background:{accent}; margin-right:.5rem;}}
+      .status-grid {{display:grid; grid-template-columns:repeat(9,minmax(0,1fr)); gap:.55rem; margin:.15rem 0 1.2rem;}}
+      .status-tile {{background:{card}; border:1px solid {border}; border-radius:.65rem; padding:.65rem .7rem; min-width:0;}}
+      .status-tile span {{display:block; color:{muted}; font-size:.72rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}}
+      .status-tile strong {{display:block; color:{text}; font-size:1.25rem; line-height:1.35;}}
+      .status-applied {{background:{'#13243b' if dark else '#edf6ff'};}}
+      .status-warm {{background:{'#36251c' if dark else '#fff3e8'};}}
+      .status-assessment {{background:{'#352d18' if dark else '#fff8e8'};}}
+      .status-interview {{background:{'#262042' if dark else '#f3f0ff'};}}
+      .status-final-round {{background:{'#242444' if dark else '#f0f1ff'};}}
+      .status-rejected {{background:{'#2b2027' if dark else '#fff0f2'};}}
+      .status-offer, .status-accepted {{background:{'#143025' if dark else '#ebfaf2'};}}
+      .applications-table-wrap {{border:1px solid {border}; border-radius:.65rem; overflow:auto; background:{card};}}
+      .applications-table {{width:100%; border-collapse:collapse; min-width:680px;}}
+      .applications-table th {{background:{'#172033' if dark else '#f5f7fb'}; color:{muted}; font-size:.72rem; font-weight:650; text-align:left; padding:.62rem .7rem; border-bottom:1px solid {border}; white-space:nowrap;}}
+      .applications-table td {{color:{text}; font-size:.82rem; padding:.65rem .7rem; border-bottom:1px solid {border}; vertical-align:top;}}
+      .applications-table tr:last-child td {{border-bottom:0;}}
+      .applications-table td:first-child {{font-weight:650;}}
+      .applications-table .notes-cell {{color:{muted}; max-width:230px;}}
+      .status-pill {{display:inline-block; border-radius:999px; padding:.18rem .52rem; background:{'#262042' if dark else '#f0efff'}; color:{'#dcd8ff' if dark else '#4d42d6'}; font-size:.72rem; font-weight:650; white-space:nowrap;}}
+      @media (max-width: 1000px) {{.status-grid {{grid-template-columns:repeat(3,minmax(0,1fr));}}}}
       .small-muted {{color:{muted}; font-size:.86rem;}}
     </style>
     """, unsafe_allow_html=True)
@@ -64,6 +103,7 @@ def sidebar(profile) -> str:
 
 def dashboard(user_id: int) -> None:
     st.title("Dashboard")
+    st.caption("Your internship search, in one clear view.")
     m = metrics(user_id)
     cols = st.columns(5)
     cols[0].metric("Applications sent", m["sent"])
@@ -72,13 +112,60 @@ def dashboard(user_id: int) -> None:
     cols[3].metric("Offer rate", f"{m['offer_rate']}%")
     cols[4].metric("Response rate", f"{m['response_rate']}%")
     items = list_internships(user_id)
-    left, right = st.columns([1.7, 1])
+    sync = latest_sync(user_id)
+    if sync:
+        changes = "".join(f"<p><span class='sync-dot'></span>{escape(change)}</p>" for change in sync["changes"][:4])
+        if not changes:
+            changes = "<p>No application changes were needed.</p>"
+        st.markdown(
+            f"<div class='sync-panel'><strong>Changed in last sync</strong>{changes}"
+            f"<p>{sync['added_count']} added · {sync['updated_count']} updated · {sync['skipped_count']} unchanged or skipped</p></div>",
+            unsafe_allow_html=True,
+        )
+
+    st.subheader("Application status overview")
+    counts = {status: sum(item.status == status for item in items) for status in STATUSES}
+    status_tiles = "".join(
+        f"<div class='status-tile status-{status.lower().replace(' ', '-')}'><span>{status}</span><strong>{counts[status]}</strong></div>"
+        for status in STATUSES
+    )
+    st.markdown(f"<div class='status-grid'>{status_tiles}</div>", unsafe_allow_html=True)
+
+    left, right = st.columns([2.2, 1])
     with left:
-        st.subheader("Pipeline")
-        counts = {s: sum(i.status == s for i in items) for s in STATUSES}
-        chart = {k: v for k, v in counts.items() if v}
-        if chart: st.bar_chart(chart)
-        else: st.info("Add your first internship to start tracking your pipeline.")
+        st.subheader("Applications")
+        search_col, status_col = st.columns([2, 1])
+        search = search_col.text_input("Search applications", placeholder="Search companies, roles, or notes…")
+        status_filter = status_col.selectbox("Filter by status", ["All statuses"] + STATUSES)
+        filtered = []
+        for item in items:
+            haystack = " ".join([item.company_name, item.role_title, item.notes or "", item.next_action or ""]).casefold()
+            if search and search.casefold() not in haystack:
+                continue
+            if status_filter != "All statuses" and item.status != status_filter:
+                continue
+            filtered.append(item)
+        if filtered:
+            rows = "".join(
+                "<tr>"
+                f"<td>{escape(item.company_name)}</td>"
+                f"<td>{escape(item.role_title)}</td>"
+                f"<td><span class='status-pill'>{escape(item.status)}</span></td>"
+                f"<td>{escape(item.date_applied or '')}</td>"
+                f"<td>{escape(item.next_action or '')}</td>"
+                f"<td class='notes-cell'>{escape(item.notes or '')}</td>"
+                "</tr>"
+                for item in filtered
+            )
+            st.markdown(
+                "<div class='applications-table-wrap'><table class='applications-table'>"
+                "<thead><tr><th>Company</th><th>Role</th><th>Status</th><th>Applied</th><th>Next action</th><th>Notes</th></tr></thead>"
+                f"<tbody>{rows}</tbody></table></div>",
+                unsafe_allow_html=True,
+            )
+            st.caption(f"{len(filtered)} of {len(items)} applications shown")
+        else:
+            st.info("No applications match these filters." if items else "Add your first internship to start tracking your pipeline.")
         st.subheader("Recent activity")
         for row in activity(user_id, 8):
             with st.container(border=True):
@@ -307,7 +394,26 @@ def profile_page(user_id: int, profile) -> None:
 
 
 def export_page(user_id: int) -> None:
-    st.title("Export")
+    st.title("Import & Export")
+    st.caption("Bring in a tracker file safely, then export a clean backup whenever you need it.")
+    st.subheader("Sync from a file")
+    st.write("Upload CSV or JSON with `company`, `role`, `status`, `date`, and `notes` columns. `company_name`, `role_title`, and `date_applied` also work.")
+    upload = st.file_uploader("Application tracker file", type=["csv", "json"])
+    source = st.text_input("Import source", value="Tracker file")
+    if upload and st.button("Sync applications", type="primary"):
+        try:
+            rows = parse_sync_file(upload.getvalue(), upload.name)
+            result = sync_applications(user_id, rows, source)
+            st.success(f"Sync complete: {result['added']} added, {result['updated']} updated, {result['skipped']} unchanged or skipped.")
+            if result["changes"]:
+                with st.expander("View changes", expanded=True):
+                    for change in result["changes"]:
+                        st.write(f"• {change}")
+        except (UnicodeDecodeError, ValueError) as exc:
+            st.error(str(exc))
+    st.caption("Existing notes are preserved. New notes are appended with a date, and advanced or terminal statuses are not silently moved backward.")
+    st.divider()
+    st.subheader("Export a backup")
     st.download_button("Download applications CSV",export_csv(user_id),"internship_tracker_applications.csv","text/csv")
     st.caption("Passwords and password hashes are never included in exports.")
 

@@ -198,11 +198,11 @@ def metrics(user_id: int) -> dict[str, int]:
     sent = [x for x in items if x.date_applied or reached[x.id] - {"Wishlist"}]
     interviews = [x for x in sent if reached[x.id] & {"Interview", "Final Round", "Offer", "Accepted"}]
     offers = [x for x in sent if reached[x.id] & {"Offer", "Accepted"}]
-    responses = [x for x in sent if reached[x.id] & {"Assessment", "Interview", "Final Round", "Rejected", "Offer", "Accepted"}]
+    responses = [x for x in sent if reached[x.id] & {"Warm", "Assessment", "Interview", "Final Round", "Rejected", "Offer", "Accepted"}]
     return {
         "tracked": len(items),
         "sent": len(sent),
-        "active": sum(x.status in {"Applied", "Assessment", "Interview", "Final Round", "Offer"} for x in items),
+        "active": sum(x.status in {"Applied", "Warm", "Assessment", "Interview", "Final Round", "Offer"} for x in items),
         "interview_rate": round(100 * len(interviews) / len(sent)) if sent else 0,
         "offer_rate": round(100 * len(offers) / len(sent)) if sent else 0,
         "response_rate": round(100 * len(responses) / len(sent)) if sent else 0,
