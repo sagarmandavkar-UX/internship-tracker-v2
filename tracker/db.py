@@ -119,9 +119,30 @@ def init_db() -> None:
               foreign key(user_id) references users(id) on delete cascade,
               foreign key(internship_id) references internships(id) on delete cascade
             );
+            create table if not exists sync_runs (
+              id integer primary key autoincrement,
+              user_id integer not null,
+              source text not null,
+              added_count integer not null default 0,
+              updated_count integer not null default 0,
+              skipped_count integer not null default 0,
+              created_at text not null,
+              foreign key(user_id) references users(id) on delete cascade
+            );
+            create table if not exists sync_changes (
+              id integer primary key autoincrement,
+              run_id integer not null,
+              internship_id integer,
+              summary text not null,
+              created_at text not null,
+              foreign key(run_id) references sync_runs(id) on delete cascade,
+              foreign key(internship_id) references internships(id) on delete set null
+            );
             create index if not exists idx_internships_user_status on internships(user_id, status);
             create index if not exists idx_reminders_date on reminders(internship_id, reminder_date);
             create index if not exists idx_status_history on status_history(internship_id, changed_at);
+            create index if not exists idx_sync_runs_user on sync_runs(user_id, created_at);
+            create index if not exists idx_sync_changes_run on sync_changes(run_id, id);
             """
         )
         conn.commit()

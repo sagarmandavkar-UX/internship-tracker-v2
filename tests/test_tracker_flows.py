@@ -13,6 +13,7 @@ from tracker.ai import cover_letter, list_results, resume_match, save_result, su
 from tracker.applications import activity, get_auto_reminder_date, metrics, save_internship, status_history, update_status
 from tracker.auth import create_user
 from tracker.extras import add_note, add_question, export_csv, list_notes, list_questions, list_reminders
+from tracker.sync import latest_sync, parse_sync_file, sync_applications
 
 
 @pytest.fixture
@@ -149,3 +150,73 @@ def test_signup_application_and_reminder_in_streamlit(clean_db):
             app.button[0].click().run(timeout=20)
             assert not app.exception
             assert list_results(owner, app_id)[0]["result"]["source"] == "Local keyword coverage"
+
+
+def test_tracker_sync_adds_warm_and_preserves_existing_notes(clean_db):
+    owner = user("sync@example.com")
+    app_id = save_internship(owner, application(notes="My private note", status="Applied"))
+    result = sync_applications(
+        owner,
+        [{"company": "Acme", "role": "APM [19249]", "status": "Warm", "date": "2026-10-06", "notes": "Recruiter keeping me in mind"}],
+        "Friend-style tracker",
+    )
+    assert result["updated"] == 1
+    with db.connect() as conn:
+        row = conn.execute("select status,notes from internships where id=?", (app_id,)).fetchone()
+    assert row["status"] == "Warm"
+    assert "My private note" in row["notes"]
+    assert "[10/06] Recruiter keeping me in mind" in row["notes"]
+    sync = latest_sync(owner)
+    assert sync and sync["source"] == "Friend-style tracker"
+    assert sync["changes"] == ["Acme — APM: Applied → Warm"]
+
+
+def test_tracker_sync_does_not_regress_or_merge_descriptive_roles(clean_db):
+    owner = user("progress@example.com")
+    app_id = save_internship(owner, application(status="Interview", notes="Panel booked"))
+    result = sync_applications(
+        owner,
+        [
+            {"company": "Acme", "role": "APM", "status": "Applied", "date": "2026-10-06", "notes": "Panel booked"},
+            {"company": "Acme", "role": "APM - Risk Platform", "status": "Applied", "date": "2026-10-06"},
+        ],
+    )
+    with db.connect() as conn:
+        original = conn.execute("select status from internships where id=?", (app_id,)).fetchone()
+        count = conn.execute("select count(*) from internships where user_id=?", (owner,)).fetchone()[0]
+    assert original["status"] == "Interview"
+    assert count == 2
+    assert result["added"] == 1
+    assert result["updated"] == 0
+    assert result["skipped"] == 1
+
+
+def test_tracker_sync_supports_reapplication_and_file_formats(clean_db):
+    owner = user("reapply@example.com")
+    app_id = save_internship(owner, application(status="Rejected", date_applied="2026-09-01"))
+    csv_rows = parse_sync_file(b"company,role,status,date,notes\nAcme,APM,Applied,10/06/2026,Fresh application\n", "tracker.csv")
+    result = sync_applications(owner, csv_rows)
+    assert result["updated"] == 1
+    with db.connect() as conn:
+        row = conn.execute("select status,date_applied,notes from internships where id=?", (app_id,)).fetchone()
+    assert row["status"] == "Applied"
+    assert row["date_applied"] == "2026-10-06"
+    assert "Re-applied" in row["notes"]
+    json_rows = parse_sync_file(b'{"rows":[{"company":"Beta","role":"Design Intern","status":"Interviewing"}]}', "tracker.json")
+    assert json_rows[0]["status"] == "Interviewing"
+
+
+def test_warm_requires_new_evidence_and_keeps_application_date(clean_db):
+    owner = user("warm@example.com")
+    app_id = save_internship(owner, application(status="Warm", date_applied="2026-09-15"))
+    stale = sync_applications(owner, [{"company": "Acme", "role": "APM", "status": "Interviewing", "date": "2026-09-15"}])
+    assert stale["skipped"] == 1
+    fresh = sync_applications(
+        owner,
+        [{"company": "Acme", "role": "APM", "status": "Interviewing", "date": "2026-09-15", "event_date": "2026-10-06", "changed": True}],
+    )
+    assert fresh["updated"] == 1
+    with db.connect() as conn:
+        row = conn.execute("select status,date_applied from internships where id=?", (app_id,)).fetchone()
+    assert row["status"] == "Interview"
+    assert row["date_applied"] == "2026-09-15"
