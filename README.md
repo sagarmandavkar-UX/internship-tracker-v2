@@ -91,6 +91,7 @@ tracker/
   auth.py                  Authentication and profile service
   applications.py          Application CRUD, status history, analytics
   extras.py                Reminders, interview prep, notes, CSV export
+  sync.py                  CSV/JSON tracker import and sync matching
   ai.py                    Optional OpenAI and local AI helpers
 smoke_test_tracker.py      Core data/security smoke tests
 tests/                     App startup, owner isolation, funnel, reminder, and AI fallback tests
@@ -116,3 +117,7 @@ GitHub Actions installs the pinned dependencies, compiles the code, and runs bot
 - OpenAI requests use `store=False`.
 - Reminders appear inside the app; it does not send emails or operating-system notifications in the background.
 - The SQLite database is not encrypted at rest. People who can read the database file on the host can read its application data. This is a local or small single-instance demo, not a production multi-tenant service. A public deployment needs managed authentication and storage, password reset, login rate limiting, HTTPS, backups, and a production database.
+
+## License
+
+Released under the [MIT License](LICENSE).
